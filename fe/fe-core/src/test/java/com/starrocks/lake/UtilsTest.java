@@ -15,14 +15,17 @@
 
 package com.starrocks.lake;
 
+import com.google.common.collect.Lists;
 import com.starrocks.common.ErrorReportException;
 import com.starrocks.common.UserException;
 import com.starrocks.server.GlobalStateMgr;
 import com.starrocks.server.NodeMgr;
 import com.starrocks.server.WarehouseManager;
 import com.starrocks.system.Backend;
+import com.starrocks.system.ComputeNode;
 import com.starrocks.system.NodeSelector;
 import com.starrocks.system.SystemInfoService;
+import mockit.Expectations;
 import mockit.Mock;
 import mockit.MockUp;
 import mockit.Mocked;
@@ -38,6 +41,9 @@ public class UtilsTest {
 
     @Mocked
     NodeMgr nodeMgr;
+
+    @Mocked
+    SystemInfoService systemInfo;
 
     @Mocked
     NodeSelector nodeSelector;
@@ -76,7 +82,39 @@ public class UtilsTest {
     }
 
     @Test
-    public void testGetWarehouse() {
+    public void testSelectWorkerGroupByWarehouseId_hasAliveNodes() throws UserException {
+        new MockUp<GlobalStateMgr>() {
+            @Mock
+            public NodeMgr getNodeMgr() {
+                return nodeMgr;
+            }
+        };
+
+        new MockUp<NodeMgr>() {
+            @Mock
+            public SystemInfoService getClusterInfo() {
+                return systemInfo;
+            }
+        };
+
+        new MockUp<SystemInfoService>() {
+            @Mock
+            public ComputeNode getBackendOrComputeNode(long nodeId) {
+                ComputeNode node = new ComputeNode();
+                node.setAlive(true);
+                return node;
+            }
+        };
+
+        new Expectations() {
+            {
+                GlobalStateMgr.getCurrentState().getStarOSAgent().getWorkersByWorkerGroup(StarOSAgent.DEFAULT_WORKER_GROUP_ID);
+                minTimes = 0;
+                result = Lists.newArrayList(10003L, 10004L);
+            }
+        };
+
+
         WarehouseManager manager = new WarehouseManager();
         manager.initDefaultWarehouse();
 
@@ -93,6 +131,52 @@ public class UtilsTest {
             Assert.assertEquals(workerGroupId.orElse(1000L).longValue(), 1000L);
         }
     }
+
+    @Test
+    public void testSelectWorkerGroupByWarehouseId_hasNoAliveNodes() throws UserException {
+        new MockUp<GlobalStateMgr>() {
+            @Mock
+            public NodeMgr getNodeMgr() {
+                return nodeMgr;
+            }
+        };
+
+        new MockUp<NodeMgr>() {
+            @Mock
+            public SystemInfoService getClusterInfo() {
+                return systemInfo;
+            }
+        };
+
+        new MockUp<SystemInfoService>() {
+            @Mock
+            public ComputeNode getBackendOrComputeNode(long nodeId) {
+                ComputeNode node = new ComputeNode();
+                node.setAlive(false);
+                return node;
+            }
+        };
+
+        new Expectations() {
+            {
+                GlobalStateMgr.getCurrentState().getStarOSAgent().getWorkersByWorkerGroup(StarOSAgent.DEFAULT_WORKER_GROUP_ID);
+                minTimes = 0;
+                result = Lists.newArrayList(10003L, 10004L);
+            }
+        };
+
+        WarehouseManager manager = new WarehouseManager();
+        manager.initDefaultWarehouse();
+
+
+        try {
+            Utils.selectWorkerGroupByWarehouseId(manager, WarehouseManager.DEFAULT_WAREHOUSE_ID);
+            Assert.assertEquals(1, 2);   // can not be here
+        } catch (ErrorReportException e) {
+            Assert.assertEquals(1, 1);   // can not be here
+        }
+    }
+
 
     @Test
     public void testGetWarehouseIdByBackend() {

@@ -28,6 +28,7 @@ import com.starrocks.lake.LakeTablet;
 import com.starrocks.lake.StarOSAgent;
 import com.starrocks.persist.gson.GsonUtils;
 import com.starrocks.system.ComputeNode;
+import com.starrocks.system.SystemInfoService;
 import com.starrocks.warehouse.DefaultWarehouse;
 import com.starrocks.warehouse.Warehouse;
 import org.apache.logging.log4j.LogManager;
@@ -42,6 +43,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReadWriteLock;
+import java.util.stream.Collectors;
 
 public class WarehouseManager implements Writable {
     private static final Logger LOG = LogManager.getLogger(WarehouseManager.class);
@@ -121,6 +123,15 @@ public class WarehouseManager implements Writable {
             LOG.warn("Fail to get compute node ids from starMgr : {}", e.getMessage());
             return new ArrayList<>();
         }
+    }
+
+    public List<ComputeNode> getAliveComputeNodes(long warehouseId) {
+        List<Long> computeNodeIds = getAllComputeNodeIds(warehouseId);
+        SystemInfoService systemInfoService = GlobalStateMgr.getCurrentState().getNodeMgr().getClusterInfo();
+        List<ComputeNode> nodes = computeNodeIds.stream()
+                .map(id -> systemInfoService.getBackendOrComputeNode(id))
+                .filter(ComputeNode::isAlive).collect(Collectors.toList());
+        return nodes;
     }
 
     public List<Long> getAllComputeNodeIds(String warehouseName) {

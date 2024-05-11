@@ -19,6 +19,8 @@ import com.staros.proto.ShardInfo;
 import com.starrocks.catalog.MaterializedIndex;
 import com.starrocks.catalog.Partition;
 import com.starrocks.catalog.Tablet;
+import com.starrocks.common.ErrorCode;
+import com.starrocks.common.ErrorReportException;
 import com.starrocks.common.NoAliveBackendException;
 import com.starrocks.common.UserException;
 import com.starrocks.proto.PublishLogVersionBatchRequest;
@@ -215,6 +217,12 @@ public class Utils {
         if (warehouse == null)  {
             LOG.warn("failed to get warehouse by id {}", warehouseId);
             return Optional.empty();
+        }
+
+        List<ComputeNode> aliveNodes = manager.getAliveComputeNodes(warehouseId);
+        if (CollectionUtils.isEmpty(aliveNodes)) {
+            LOG.warn("there is no alive workers in warehouse: " + warehouse.getName());
+            ErrorReportException.report(ErrorCode.ERR_NO_NODES_IN_WAREHOUSE, warehouse.getName());
         }
 
         List<Long> ids = warehouse.getWorkerGroupIds();

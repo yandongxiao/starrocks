@@ -326,18 +326,23 @@ public class AuthenticationMgr {
         }
     }
 
-    private void updateUserPropertyNoLock(String user, List<Pair<String, String>> properties) throws DdlException {
+    private void updateUserPropertyNoLock(String user, List<Pair<String, String>> properties, boolean isReplay)
+            throws DdlException {
         UserProperty userProperty = userNameToProperty.getOrDefault(user, null);
         if (userProperty == null) {
             throw new DdlException("user '" + user + "' doesn't exist");
         }
-        userProperty.update(properties);
+        if (isReplay) {
+            userProperty.updateForReplayJournal(properties);
+        } else {
+            userProperty.update(user, properties);
+        }
     }
 
     public void updateUserProperty(String user, List<Pair<String, String>> properties) throws DdlException {
         try {
             writeLock();
-            updateUserPropertyNoLock(user, properties);
+            updateUserPropertyNoLock(user, properties, false);
             UserPropertyInfo propertyInfo = new UserPropertyInfo(user, properties);
             GlobalStateMgr.getCurrentState().getEditLog().logUpdateUserPropertyV2(propertyInfo);
             LOG.info("finished to update user '{}' with properties: {}", user, properties);
@@ -349,7 +354,7 @@ public class AuthenticationMgr {
     public void replayUpdateUserProperty(UserPropertyInfo info) throws DdlException {
         try {
             writeLock();
-            updateUserPropertyNoLock(info.getUser(), info.getProperties());
+            updateUserPropertyNoLock(info.getUser(), info.getProperties(), true);
         } finally {
             writeUnlock();
         }
@@ -591,5 +596,13 @@ public class AuthenticationMgr {
         this.isLoaded = true;
         this.userNameToProperty = ret.userNameToProperty;
         this.userToAuthenticationInfo = ret.userToAuthenticationInfo;
+    }
+
+    public UserProperty getUserProperty(String userName) {
+        UserProperty userProperty = userNameToProperty.get(userName);
+        if (userProperty == null) {
+            throw new SemanticException("Unknown user: " + userName);
+        }
+        return userProperty;
     }
 }

@@ -72,7 +72,8 @@ public class AuthenticationManagerTest {
         AuthenticationMgr manager = ctx.getGlobalStateMgr().getAuthenticationMgr();
         Assert.assertTrue(manager.doesUserExist(UserIdentity.ROOT));
         Assert.assertFalse(manager.doesUserExist(UserIdentity.createAnalyzedUserIdentWithIp("fake", "%")));
-        Assert.assertEquals(new UserProperty().getMaxConn(), manager.getMaxConn(AuthenticationMgr.ROOT_USER));
+        Assert.assertEquals(new UserProperty().getMaxConn(),
+                manager.getMaxConn(AuthenticationMgr.ROOT_USER));
     }
 
     @Test

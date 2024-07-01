@@ -272,6 +272,11 @@ public class VariableMgr {
         return (SessionVariable) DEFAULT_SESSION_VARIABLE.clone();
     }
 
+    public static void checkFlag(SystemVariable sessionVariable) throws DdlException {
+        VarContext ctx = VariableMgr.getVarContext(sessionVariable.getVariable());
+        checkUpdate(sessionVariable, ctx.getFlag());
+    }
+
     // Check if this setVar can be set correctly
     private static void checkUpdate(SystemVariable setVar, int flag) throws DdlException {
         if ((flag & READ_ONLY) != 0) {
@@ -659,6 +664,14 @@ public class VariableMgr {
         } else {
             return (varContext.getFlag() & DISABLE_FORWARD_TO_LEADER) == 0;
         }
+    }
+
+    public static Field getField(String name) {
+        VarContext ctx = getVarContext(name);
+        if (ctx == null) {
+            return null;
+        }
+        return ctx.getField();
     }
 
     @Retention(RetentionPolicy.RUNTIME)

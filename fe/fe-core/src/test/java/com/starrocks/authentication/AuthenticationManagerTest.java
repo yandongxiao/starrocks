@@ -256,6 +256,71 @@ public class AuthenticationManagerTest {
     }
 
     @Test
+    public void testCreateUserPersistWithProperties() throws Exception {
+        AuthenticationMgr masterManager = ctx.getGlobalStateMgr().getAuthenticationMgr();
+        String user = "user123";
+
+        // 1. create empty image
+        UtFrameUtils.PseudoJournalReplayer.resetFollowerJournalQueue();
+        UtFrameUtils.PseudoImage emptyImage = new UtFrameUtils.PseudoImage();
+        masterManager.saveV2(emptyImage.getDataOutputStream());
+
+        // 2. create user with properties
+        String sql = "create user user123 properties (\"session.tx_visible_wait_timeout\" = \"100\", " +
+                "\"session.metadata_collect_query_timeout\" = \"200\")";
+        CreateUserStmt stmt = (CreateUserStmt) UtFrameUtils.parseStmtWithNewParser(sql, ctx);
+        masterManager.createUser(stmt);
+        UserProperty userProperty = masterManager.getUserProperty(user);
+        Assert.assertTrue(userProperty.getSessionVariables().size() == 2);
+        Assert.assertTrue(userProperty.getSessionVariables().get("tx_visible_wait_timeout").equals("100"));
+        Assert.assertTrue(userProperty.getSessionVariables().get("metadata_collect_query_timeout").equals("200"));
+
+        // 2.1. create user with default catalog or database, we expect it will be failed
+        sql = "create user user2 properties (\"default_session_catalog\" = \"my_catalog\")";
+        stmt = (CreateUserStmt) UtFrameUtils.parseStmtWithNewParser(sql, ctx);
+        try {
+            masterManager.createUser(stmt);
+            Assert.assertEquals(1, 2);
+        } catch (Exception e) {
+        }
+
+        // 3. save final image
+        UtFrameUtils.PseudoImage finalImage = new UtFrameUtils.PseudoImage();
+        masterManager.saveV2(finalImage.getDataOutputStream());
+
+        // 4 verify replay...
+
+        // 4.1 load empty image
+        AuthenticationMgr followerManager = new AuthenticationMgr();
+        SRMetaBlockReader srMetaBlockReader = new SRMetaBlockReader(emptyImage.getDataInputStream());
+        followerManager.loadV2(srMetaBlockReader);
+
+        // 4.2 replay update user property
+        CreateUserInfo createUserInfo = (CreateUserInfo)
+                UtFrameUtils.PseudoJournalReplayer.replayNextJournal(OperationType.OP_CREATE_USER_V2);
+        followerManager.replayCreateUser(
+                createUserInfo.getUserIdentity(),
+                createUserInfo.getAuthenticationInfo(),
+                createUserInfo.getUserProperty(),
+                createUserInfo.getUserPrivilegeCollection(),
+                createUserInfo.getPluginId(),
+                createUserInfo.getPluginVersion());
+        userProperty = followerManager.getUserProperty(user);
+        Assert.assertTrue(userProperty.getSessionVariables().size() == 2);
+        Assert.assertTrue(userProperty.getSessionVariables().get("tx_visible_wait_timeout").equals("100"));
+        Assert.assertTrue(userProperty.getSessionVariables().get("metadata_collect_query_timeout").equals("200"));
+
+        // 4.3 verify final image
+        AuthenticationMgr finalManager = new AuthenticationMgr();
+        srMetaBlockReader = new SRMetaBlockReader(finalImage.getDataInputStream());
+        finalManager.loadV2(srMetaBlockReader);
+        userProperty = finalManager.getUserProperty(user);
+        Assert.assertTrue(userProperty.getSessionVariables().size() == 2);
+        Assert.assertTrue(userProperty.getSessionVariables().get("tx_visible_wait_timeout").equals("100"));
+        Assert.assertTrue(userProperty.getSessionVariables().get("metadata_collect_query_timeout").equals("200"));
+    }
+
+    @Test
     public void testDropAlterUser() throws Exception {
         UserIdentity testUser = UserIdentity.createAnalyzedUserIdentWithIp("test", "%");
         UserIdentity testUserWithIp = UserIdentity.createAnalyzedUserIdentWithIp("test", "10.1.1.1");
@@ -311,6 +376,76 @@ public class AuthenticationManagerTest {
     }
 
     @Test
+    public void testAlterPersistWithProperties() throws Exception {
+        AuthenticationMgr masterManager = ctx.getGlobalStateMgr().getAuthenticationMgr();
+
+        // 1. create empty image
+        UtFrameUtils.PseudoJournalReplayer.resetFollowerJournalQueue();
+        UtFrameUtils.PseudoImage emptyImage = new UtFrameUtils.PseudoImage();
+        masterManager.saveV2(emptyImage.getDataOutputStream());
+
+        // 2. create user with properties
+        String sql = "create user user1 default role root properties (\"session.tx_visible_wait_timeout\" = \"100\", " +
+                "\"session.metadata_collect_query_timeout\" = \"100\")";
+        CreateUserStmt createUserStmt = (CreateUserStmt) UtFrameUtils.parseStmtWithNewParser(sql, ctx);
+        masterManager.createUser(createUserStmt);
+        UserProperty userProperty = masterManager.getUserProperty("user1");
+        Assert.assertTrue(userProperty.getSessionVariables().size() == 2);
+        Assert.assertTrue(userProperty.getSessionVariables().get("tx_visible_wait_timeout").equals("100"));
+        Assert.assertTrue(userProperty.getSessionVariables().get("metadata_collect_query_timeout").equals("100"));
+
+        // 3. alter user with properties
+        sql = "alter user user1 set properties (\"session.tx_visible_wait_timeout\" = \"200\", " +
+                "\"session.metadata_collect_query_timeout\" = \"200\"" +
+                ")";
+        SetUserPropertyStmt setUserPropertyStmt = (SetUserPropertyStmt) UtFrameUtils.parseStmtWithNewParser(sql, ctx);
+        masterManager.updateUserProperty(setUserPropertyStmt.getUser(), setUserPropertyStmt.getPropertyPairList());
+        Assert.assertTrue(userProperty.getSessionVariables().size() == 2);
+        Assert.assertTrue(userProperty.getSessionVariables().get("tx_visible_wait_timeout").equals("200"));
+        Assert.assertTrue(userProperty.getSessionVariables().get("metadata_collect_query_timeout").equals("200"));
+
+        // 4. save final image
+        UtFrameUtils.PseudoImage finalImage = new UtFrameUtils.PseudoImage();
+        masterManager.saveV2(finalImage.getDataOutputStream());
+
+        // 5 verify replay...
+
+        // 5.1 load empty image
+        AuthenticationMgr followerManager = new AuthenticationMgr();
+        SRMetaBlockReader srMetaBlockReader = new SRMetaBlockReader(emptyImage.getDataInputStream());
+        followerManager.loadV2(srMetaBlockReader);
+
+        // 5.2 replay create user
+        CreateUserInfo createUserInfo = (CreateUserInfo)
+                UtFrameUtils.PseudoJournalReplayer.replayNextJournal(OperationType.OP_CREATE_USER_V2);
+        followerManager.replayCreateUser(
+                createUserInfo.getUserIdentity(),
+                createUserInfo.getAuthenticationInfo(),
+                createUserInfo.getUserProperty(),
+                createUserInfo.getUserPrivilegeCollection(),
+                createUserInfo.getPluginId(),
+                createUserInfo.getPluginVersion());
+
+        // 5.2 replay alter user
+        UserPropertyInfo propertyInfo =
+                (UserPropertyInfo) UtFrameUtils.PseudoJournalReplayer.replayNextJournal(OperationType.OP_UPDATE_USER_PROP_V3);
+        followerManager.replayUpdateUserProperty(propertyInfo);
+        userProperty = followerManager.getUserProperty("user1");
+        Assert.assertTrue(userProperty.getSessionVariables().size() == 2);
+        Assert.assertTrue(userProperty.getSessionVariables().get("tx_visible_wait_timeout").equals("200"));
+        Assert.assertTrue(userProperty.getSessionVariables().get("metadata_collect_query_timeout").equals("200"));
+
+        // 4.3 verify final image
+        AuthenticationMgr finalManager = new AuthenticationMgr();
+        srMetaBlockReader = new SRMetaBlockReader(finalImage.getDataInputStream());
+        finalManager.loadV2(srMetaBlockReader);
+        userProperty = finalManager.getUserProperty("user1");
+        Assert.assertTrue(userProperty.getSessionVariables().size() == 2);
+        Assert.assertTrue(userProperty.getSessionVariables().get("tx_visible_wait_timeout").equals("200"));
+        Assert.assertTrue(userProperty.getSessionVariables().get("metadata_collect_query_timeout").equals("200"));
+    }
+
+    @Test
     public void testDropAlterPersist() throws Exception {
         UserIdentity testUser = UserIdentity.createAnalyzedUserIdentWithIp("test", "%");
         byte[] seed = "petals on a wet black bough".getBytes(StandardCharsets.UTF_8);
@@ -336,7 +471,7 @@ public class AuthenticationManagerTest {
         // 3. alter user
         sql = "alter user test identified by 'abc'";
         AlterUserStmt alterUserStmt = (AlterUserStmt) UtFrameUtils.parseStmtWithNewParser(sql, ctx);
-        masterManager.alterUser(alterUserStmt.getUserIdentity(), alterUserStmt.getAuthenticationInfo());
+        masterManager.alterUser(alterUserStmt.getUserIdentity(), alterUserStmt.getAuthenticationInfo(), null);
         Assert.assertEquals(testUser, masterManager.checkPassword(
                 testUser.getUser(), "10.1.1.1", scramble, seed));
 
@@ -378,7 +513,7 @@ public class AuthenticationManagerTest {
         // 7.2 replay alter user
         AlterUserInfo alterInfo = (AlterUserInfo)
                 UtFrameUtils.PseudoJournalReplayer.replayNextJournal(OperationType.OP_ALTER_USER_V2);
-        followerManager.replayAlterUser(alterInfo.getUserIdentity(), alterInfo.getAuthenticationInfo());
+        followerManager.replayAlterUser(alterInfo.getUserIdentity(), alterInfo.getAuthenticationInfo(), null);
         Assert.assertEquals(testUser, followerManager.checkPassword(
                 testUser.getUser(), "10.1.1.1", scramble, seed));
         // 7.2.1 replay update user property
@@ -585,5 +720,46 @@ public class AuthenticationManagerTest {
         } catch (AnalysisException e) {
             Assert.assertTrue(e.getMessage().contains("IS_ROLE_IN_SESSION currently only supports a single parameter"));
         }
+    }
+
+    @Test
+    public void testSetUserPropertyPersist() throws Exception {
+        AuthenticationMgr masterManager = ctx.getGlobalStateMgr().getAuthenticationMgr();
+        Assert.assertTrue(masterManager.doesUserExist(UserIdentity.ROOT));
+
+        // 1. create empty image
+        UtFrameUtils.PseudoJournalReplayer.resetFollowerJournalQueue();
+        UtFrameUtils.PseudoImage emptyImage = new UtFrameUtils.PseudoImage();
+        masterManager.saveV2(emptyImage.getDataOutputStream());
+
+        // 2. update user property
+        String sql = "set property for 'root' 'max_user_connections' = '555'";
+        SetUserPropertyStmt setUserPropertyStmt = (SetUserPropertyStmt) UtFrameUtils.parseStmtWithNewParser(sql, ctx);
+        masterManager.updateUserProperty("root", setUserPropertyStmt.getPropertyPairList());
+        Assert.assertEquals(555, masterManager.getMaxConn("root"));
+
+        // 3. save final image
+        UtFrameUtils.PseudoImage finalImage = new UtFrameUtils.PseudoImage();
+        masterManager.saveV2(finalImage.getDataOutputStream());
+
+        // 4 verify replay...
+
+        // 4.1 load empty image
+        AuthenticationMgr followerManager = new AuthenticationMgr();
+        SRMetaBlockReader srMetaBlockReader = new SRMetaBlockReader(emptyImage.getDataInputStream());
+        followerManager.loadV2(srMetaBlockReader);
+
+        // 4.2 replay update user property
+        UserPropertyInfo userPropertyInfo = (UserPropertyInfo)
+                UtFrameUtils.PseudoJournalReplayer.replayNextJournal(OperationType.OP_UPDATE_USER_PROP_V3);
+        followerManager.replayUpdateUserProperty(userPropertyInfo);
+        Assert.assertEquals(555, followerManager.getMaxConn("root"));
+
+        // 4.3 verify final image
+        AuthenticationMgr finalManager = new AuthenticationMgr();
+        srMetaBlockReader = new SRMetaBlockReader(finalImage.getDataInputStream());
+        finalManager.loadV2(srMetaBlockReader);
+        Assert.assertTrue(finalManager.doesUserExist(UserIdentity.ROOT));
+        Assert.assertEquals(555, finalManager.getMaxConn("root"));
     }
 }

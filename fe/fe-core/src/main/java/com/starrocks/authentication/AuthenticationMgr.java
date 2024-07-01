@@ -281,13 +281,33 @@ public class AuthenticationMgr {
                         + " : user " + stmt.getUserIdentity() + " already exists");
                 return;
             }
-            userToAuthenticationInfo.put(userIdentity, info);
 
+            // If we create the user with properties, we need to call userProperty.update to check and update userProperty.
+            // If there are failures, update method will throw an exception
             UserProperty userProperty = null;
-            if (!userNameToProperty.containsKey(userIdentity.getUser())) {
+            String userName = userIdentity.getUser();
+            if (userNameToProperty.containsKey(userName)) {
+                userProperty = userNameToProperty.get(userName);
+            } else {
                 userProperty = new UserProperty();
-                userNameToProperty.put(userIdentity.getUser(), userProperty);
             }
+
+            if (stmt.getProperties() != null) {
+                Map<String, String> properties = stmt.getProperties();
+                if (properties.containsKey(UserProperty.PROP_DEFAULT_CATALOG) ||
+                        properties.containsKey(UserProperty.PROP_DEFAULT_DATABASE)) {
+                    // Authorizer.checkAnyActionOnOrInDb and Authorizer.checkAnyActionOnCatalog methods are not allowed to be called,
+                    // because they assume the user has been created.
+                    throw new PrivilegeException(String.format("User property %s and %s are not allowed to set in CREATE USER",
+                            UserProperty.PROP_DEFAULT_CATALOG, UserProperty.PROP_DEFAULT_DATABASE));
+                }
+                userProperty.update(userIdentity, UserProperty.changeToPairList(stmt.getProperties()));
+            }
+
+            // If all checks are passed, we can add the user to the userToAuthenticationInfo and userNameToProperty
+            userToAuthenticationInfo.put(userIdentity, info);
+            userNameToProperty.put(userName, userProperty);
+
             GlobalStateMgr globalStateMgr = GlobalStateMgr.getCurrentState();
             AuthorizationMgr authorizationManager = globalStateMgr.getAuthorizationMgr();
             // init user privilege
@@ -306,8 +326,10 @@ public class AuthenticationMgr {
         }
     }
 
-    public void alterUser(UserIdentity userIdentity, UserAuthenticationInfo userAuthenticationInfo)
-            throws DdlException {
+    // This method is used to update user information, including authentication information and user properties
+    // Note: if properties is null, we should keep the original properties
+    public void alterUser(UserIdentity userIdentity, UserAuthenticationInfo userAuthenticationInfo,
+                          Map<String, String> properties) throws DdlException {
         writeLock();
         try {
             if (!userToAuthenticationInfo.containsKey(userIdentity)) {
@@ -318,7 +340,11 @@ public class AuthenticationMgr {
             }
 
             updateUserNoLock(userIdentity, userAuthenticationInfo, true);
-            GlobalStateMgr.getCurrentState().getEditLog().logAlterUser(userIdentity, userAuthenticationInfo);
+            if (properties != null && properties.size() > 0) {
+                UserProperty userProperty = userNameToProperty.get(userIdentity.getUser());
+                userProperty.update(userIdentity, UserProperty.changeToPairList(properties));
+            }
+            GlobalStateMgr.getCurrentState().getEditLog().logAlterUser(userIdentity, userAuthenticationInfo, properties);
         } catch (AuthenticationException e) {
             throw new DdlException("failed to alter user " + userIdentity, e);
         } finally {
@@ -326,18 +352,23 @@ public class AuthenticationMgr {
         }
     }
 
-    private void updateUserPropertyNoLock(String user, List<Pair<String, String>> properties) throws DdlException {
+    private void updateUserPropertyNoLock(String user, List<Pair<String, String>> properties, boolean isReplay)
+            throws DdlException {
         UserProperty userProperty = userNameToProperty.getOrDefault(user, null);
         if (userProperty == null) {
             throw new DdlException("user '" + user + "' doesn't exist");
         }
-        userProperty.update(properties);
+        if (isReplay) {
+            userProperty.updateForReplayJournal(properties);
+        } else {
+            userProperty.update(user, properties);
+        }
     }
 
     public void updateUserProperty(String user, List<Pair<String, String>> properties) throws DdlException {
         try {
             writeLock();
-            updateUserPropertyNoLock(user, properties);
+            updateUserPropertyNoLock(user, properties, false);
             UserPropertyInfo propertyInfo = new UserPropertyInfo(user, properties);
             GlobalStateMgr.getCurrentState().getEditLog().logUpdateUserPropertyV2(propertyInfo);
             LOG.info("finished to update user '{}' with properties: {}", user, properties);
@@ -349,16 +380,20 @@ public class AuthenticationMgr {
     public void replayUpdateUserProperty(UserPropertyInfo info) throws DdlException {
         try {
             writeLock();
-            updateUserPropertyNoLock(info.getUser(), info.getProperties());
+            updateUserPropertyNoLock(info.getUser(), info.getProperties(), true);
         } finally {
             writeUnlock();
         }
     }
 
-    public void replayAlterUser(UserIdentity userIdentity, UserAuthenticationInfo info) throws AuthenticationException {
+    public void replayAlterUser(UserIdentity userIdentity, UserAuthenticationInfo info,
+                                Map<String, String> properties) throws AuthenticationException {
         writeLock();
         try {
             updateUserNoLock(userIdentity, info, true);
+            // updateForReplayJournal will catch all exceptions when replaying user properties
+            UserProperty userProperty = userNameToProperty.get(userIdentity.getUser());
+            userProperty.updateForReplayJournal(UserProperty.changeToPairList(properties));
         } finally {
             writeUnlock();
         }
@@ -428,8 +463,7 @@ public class AuthenticationMgr {
         }
     }
 
-    private void updateUserNoLock(
-            UserIdentity userIdentity, UserAuthenticationInfo info, boolean shouldExists)
+    private void updateUserNoLock(UserIdentity userIdentity, UserAuthenticationInfo info, boolean shouldExists)
             throws AuthenticationException {
         if (userToAuthenticationInfo.containsKey(userIdentity)) {
             if (!shouldExists) {
@@ -591,5 +625,13 @@ public class AuthenticationMgr {
         this.isLoaded = true;
         this.userNameToProperty = ret.userNameToProperty;
         this.userToAuthenticationInfo = ret.userToAuthenticationInfo;
+    }
+
+    public UserProperty getUserProperty(String userName) {
+        UserProperty userProperty = userNameToProperty.get(userName);
+        if (userProperty == null) {
+            throw new SemanticException("Unknown user: " + userName);
+        }
+        return userProperty;
     }
 }

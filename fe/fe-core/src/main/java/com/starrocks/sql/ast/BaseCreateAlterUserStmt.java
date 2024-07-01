@@ -19,6 +19,7 @@ import com.starrocks.authentication.UserAuthenticationInfo;
 import com.starrocks.sql.parser.NodePosition;
 
 import java.util.List;
+import java.util.Map;
 
 // CreateUserStmt and AlterUserStmt share the same parameter and check logic
 public class BaseCreateAlterUserStmt extends DdlStmt {
@@ -33,16 +34,15 @@ public class BaseCreateAlterUserStmt extends DdlStmt {
     // used in new RBAC privilege framework
     private UserAuthenticationInfo authenticationInfo = null;
 
+    private final Map<String, String> properties;
+
     @Deprecated
     protected String userForAuthPlugin;
     @Deprecated
     protected byte[] scramblePassword;
 
-    public BaseCreateAlterUserStmt(UserDesc userDesc, SetRoleType setRoleType, List<String> defaultRoles) {
-        this(userDesc, setRoleType, defaultRoles, NodePosition.ZERO);
-    }
-
     public BaseCreateAlterUserStmt(UserDesc userDesc, SetRoleType setRoleType, List<String> defaultRoles,
+                                   Map<String, String> properties,
                                    NodePosition pos) {
         super(pos);
         this.userIdentity = userDesc.getUserIdentity();
@@ -53,6 +53,7 @@ public class BaseCreateAlterUserStmt extends DdlStmt {
 
         this.setRoleType = setRoleType;
         this.defaultRoles = defaultRoles;
+        this.properties = properties;
     }
 
     public UserIdentity getUserIdentity() {
@@ -85,6 +86,10 @@ public class BaseCreateAlterUserStmt extends DdlStmt {
 
     public void setAuthenticationInfo(UserAuthenticationInfo authenticationInfo) {
         this.authenticationInfo = authenticationInfo;
+    }
+
+    public Map<String, String> getProperties() {
+        return properties;
     }
 
     @Override

@@ -33,6 +33,7 @@
 // under the License.
 package com.starrocks.mysql.nio;
 
+import com.starrocks.authentication.UserProperty;
 import com.starrocks.common.Pair;
 import com.starrocks.common.util.LogUtil;
 import com.starrocks.mysql.MysqlProto;
@@ -41,6 +42,7 @@ import com.starrocks.qe.ConnectContext;
 import com.starrocks.qe.ConnectProcessor;
 import com.starrocks.qe.ConnectScheduler;
 import com.starrocks.server.GlobalStateMgr;
+import com.starrocks.sql.ast.SystemVariable;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.xnio.ChannelListener;
@@ -49,6 +51,7 @@ import org.xnio.channels.AcceptingChannel;
 
 import java.io.IOException;
 import java.net.SocketAddress;
+import java.util.Map;
 import javax.net.ssl.SSLContext;
 
 /**
@@ -105,6 +108,24 @@ public class AcceptListener implements ChannelListener<AcceptingChannel<StreamCo
                             throw new AfterConnectedException(registerResult.second);
                         }
                         context.setStartTime();
+
+                        // set user's properties
+                        UserProperty userProperty = context.getGlobalStateMgr().getAuthenticationMgr()
+                                .getUserProperty(context.getCurrentUserIdentity().getUser());
+                        if (!userProperty.getDefaultSessionDatabase().isEmpty()) {
+                            // TODO: catch exception.
+                            String catalogDBName =
+                                    userProperty.getDefaultSessionCatalog() + "." + userProperty.getDefaultSessionDatabase();
+                            context.changeCatalogDb(catalogDBName);
+                        } else if (!userProperty.getDefaultSessionCatalog().isEmpty()) {
+                            // TODO: catch exception.
+                            context.changeCatalog(userProperty.getDefaultSessionCatalog());
+                        }
+
+                        for (Map.Entry<String, SystemVariable> entry : userProperty.getSessionVariables().entrySet()) {
+                            context.modifySystemVariable(entry.getValue(), true);
+                        }
+
                         ConnectProcessor processor = new ConnectProcessor(context);
                         context.startAcceptQuery(processor);
                     } catch (AfterConnectedException e) {

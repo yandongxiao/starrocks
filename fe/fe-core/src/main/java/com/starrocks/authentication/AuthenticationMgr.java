@@ -592,4 +592,8 @@ public class AuthenticationMgr {
         this.userNameToProperty = ret.userNameToProperty;
         this.userToAuthenticationInfo = ret.userToAuthenticationInfo;
     }
+
+    public UserProperty getUserProperty(String userName) {
+        return userNameToProperty.get(userName);
+    }
 }
